@@ -1,0 +1,4 @@
+Omnibot.configure do |config|
+  config.default_model = "gpt-4o-mini"
+  # config.on_tool_error = :capture  # or :raise
+end

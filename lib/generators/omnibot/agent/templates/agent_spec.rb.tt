@@ -1,0 +1,14 @@
+require "rails_helper"
+
+RSpec.describe <%= class_name %>Agent do
+  include Omnibot::Testing::Helpers
+
+  before { Omnibot::Testing.fake! }
+  after  { Omnibot::Testing.reset! }
+
+  it "replies" do
+    stub_agent(<%= class_name %>Agent).then_reply("hello!")
+    result = <%= class_name %>Agent.run("hi")
+    expect(result.text).to eq("hello!")
+  end
+end

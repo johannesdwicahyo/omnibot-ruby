@@ -1,0 +1,8 @@
+class <%= class_name %>Agent < Omnibot::Agent
+  instructions "You are a helpful assistant."
+  max_turns 5
+
+  # tool :lookup_order, "Find an order by ID" do |order_id:|
+  #   Order.find(order_id).summary
+  # end
+end
