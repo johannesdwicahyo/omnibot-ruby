@@ -13,6 +13,9 @@ module Omnibot
         value ? @instructions = value : @instructions
       end
 
+      # Bounds the number of tool executions in a run, not conversation rounds —
+      # the before_tool_call hook counts each call, so parallel tool calls in a
+      # single round each count separately.
       def max_turns(value = nil)
         value ? @max_turns = value : (@max_turns || 5)
       end
@@ -71,11 +74,12 @@ module Omnibot
       chat.with_schema(schema)
 
       response = instrument_llm { chat.ask(input.to_s) }
-      parse_extraction(response.content) do
+      parse_extraction(response.content) do |error|
         repair = instrument_llm do
-          chat.ask("Your previous output was not valid JSON. Respond again with ONLY valid JSON matching the schema.")
+          chat.ask("Your previous output was not valid JSON (#{error.message}). " \
+                    "Respond again with ONLY valid JSON matching the schema.")
         end
-        parse_extraction(repair.content) do
+        parse_extraction(repair.content) do |_error|
           raise ExtractionError, "extraction failed after repair: #{repair.content.to_s.truncate(200)}"
         end
       end
@@ -105,6 +109,7 @@ module Omnibot
           instrument_llm { chat.ask(message, &wrap_stream(stream)) }
         rescue TurnLimit
           strip_tools(chat)
+          synthesize_pending_tool_results(chat)
           instrument_llm do
             chat.ask("Answer the user now with the information you already have. Do not call tools.",
                      &wrap_stream(stream))
@@ -114,7 +119,7 @@ module Omnibot
       Result.new(
         text: response.content.to_s,
         tool_calls: tool_calls,
-        usage: usage_from(response),
+        usage: run_usage(chat, response),
         messages: chat.messages.map { |m| normalize_message(m) },
         fast_path: false
       )
@@ -157,7 +162,7 @@ module Omnibot
 
     def wrap_stream(stream)
       return nil unless stream
-      ->(chunk) { stream.call(chunk.content) }
+      ->(chunk) { stream.call(chunk.content) if chunk.content && !chunk.content.empty? }
     end
 
     def instrument_llm(&)
@@ -170,13 +175,50 @@ module Omnibot
       end
     end
 
+    # Per-call usage (used for the omnibot.llm.call event): just the final response.
     def usage_from(response)
       tokens = response.respond_to?(:tokens) ? response.tokens : nil
       Usage.new(tokens&.input || 0, tokens&.output || 0)
     end
 
+    # Run-level usage (Result#usage / omnibot.agent.run): one real `ask` can be N
+    # provider round trips (tool-calling loop), so sum tokens across every message
+    # that carries them. FakeChat's plain-hash messages never respond to #tokens,
+    # so that falls back to the final response's usage — keeps fake-based specs green.
+    def run_usage(chat, response)
+      token_messages = chat.messages.select { |m| m.respond_to?(:tokens) && m.tokens }
+      return usage_from(response) if token_messages.empty?
+
+      Usage.new(
+        token_messages.sum { |m| m.tokens.input || 0 },
+        token_messages.sum { |m| m.tokens.output || 0 }
+      )
+    end
+
     def strip_tools(chat)
       chat.with_tools(replace: true)
+    end
+
+    # C1: against real ruby_llm, complete_once appends the assistant message
+    # (with tool_calls) BEFORE before_tool_call fires, so raising TurnLimit out of
+    # that hook leaves unanswered tool_call(s) in chat history. The follow-up
+    # "answer now" user-role ask then 400s on OpenAI/Anthropic because every
+    # tool_call must have a matching tool-result message. With parallel tool
+    # calls, some of the batch may already have results while the rest dangle.
+    # Duck-typed defensively: FakeChat's messages are plain hashes that don't
+    # respond to #tool_calls, so this is a safe no-op there.
+    def synthesize_pending_tool_results(chat)
+      last_call_message = chat.messages.reverse_each.find do |m|
+        m.respond_to?(:tool_calls) && m.tool_calls && !m.tool_calls.empty?
+      end
+      return unless last_call_message
+
+      answered_ids = chat.messages.filter_map { |m| m.tool_call_id if m.respond_to?(:tool_call_id) && m.tool_call_id }
+
+      last_call_message.tool_calls.each_value do |tc|
+        next if answered_ids.include?(tc.id)
+        chat.add_message(role: :tool, content: "(turn limit reached)", tool_call_id: tc.id)
+      end
     end
 
     def parse_extraction(content)
@@ -185,11 +227,11 @@ module Omnibot
       when String
         begin
           JSON.parse(content, symbolize_names: true)
-        rescue JSON::ParserError
-          yield
+        rescue JSON::ParserError => e
+          yield e
         end
       else
-        yield
+        yield JSON::ParserError.new("expected a JSON string or Hash, got #{content.class}")
       end
     end
 

@@ -26,4 +26,17 @@ RSpec.describe "Agent streaming" do
     expect(chunks).to be_empty
     expect(result.text).to eq("fast!")
   end
+
+  it "guards nil and empty chunk content from real providers (I5)" do
+    chunk_class = Struct.new(:content)
+    received = []
+    agent = agent_class.new
+    wrapped = agent.send(:wrap_stream, ->(c) { received << c })
+
+    wrapped.call(chunk_class.new(nil))
+    wrapped.call(chunk_class.new(""))
+    wrapped.call(chunk_class.new("hi"))
+
+    expect(received).to eq(["hi"])
+  end
 end

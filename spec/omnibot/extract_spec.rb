@@ -28,4 +28,22 @@ RSpec.describe "Agent.extract" do
     expect { agent_class.extract("x", schema: schema) }
       .to raise_error(Omnibot::ExtractionError, /still nope/i)
   end
+
+  it "includes the JSON parse error message in the repair ask (T5)" do
+    stub_agent(agent_class).then_reply("not json").then_reply('{"ok": true}')
+
+    original_factory = Omnibot.chat_factory
+    captured_chat = nil
+    Omnibot.chat_factory = lambda { |model:, **kw|
+      captured_chat = original_factory.call(model: model, **kw)
+    }
+
+    agent_class.extract("x", schema: schema)
+
+    repair_message = captured_chat.messages.find { |m| m[:role] == :user && m[:content].to_s.include?("not valid JSON") }
+    expect(repair_message).not_to be_nil
+    expect(repair_message[:content]).to include("unexpected token")
+  ensure
+    Omnibot.chat_factory = original_factory
+  end
 end
