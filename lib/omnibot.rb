@@ -1,0 +1,8 @@
+require "active_support"
+require "active_support/core_ext"
+require "active_support/notifications"
+require "ruby_llm"
+
+require_relative "omnibot/version"
+require_relative "omnibot/errors"
+require_relative "omnibot/config"
