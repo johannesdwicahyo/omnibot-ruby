@@ -1,6 +1,17 @@
 require "active_record"
 
-ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+# ponytail: guarded so re-`load`ing this file (e.g. to recreate the schema on
+# a connection a spec already established, like a tempfile db for concurrency
+# testing) doesn't stomp that connection back to :memory:. First load (from
+# spec_helper, before any connection exists) still defaults to :memory:.
+# `connected?` only reports true once a connection has actually been checked
+# out, so check pool *existence* instead (raises before any establish_connection).
+already_established = begin
+  ActiveRecord::Base.connection_pool && true
+rescue ActiveRecord::ConnectionNotDefined
+  false
+end
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:") unless already_established
 
 ActiveRecord::Schema.verbose = false
 ActiveRecord::Schema.define do
