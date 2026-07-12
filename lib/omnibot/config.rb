@@ -14,7 +14,7 @@ module Omnibot
     def reset_config! = @config = nil
 
     def chat_factory
-      @chat_factory ||= ->(model:) { RubyLLM.chat(model: model) }
+      @chat_factory ||= ->(model:, **) { RubyLLM.chat(model: model) }
     end
     attr_writer :chat_factory
   end
