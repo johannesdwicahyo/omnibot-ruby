@@ -17,5 +17,9 @@ module Omnibot
     def active?   = ACTIVE_STATUSES.include?(status)
     def terminal? = TERMINAL_STATUSES.include?(status)
     def workflow_class = type.constantize
+
+    def retry!  = workflow_class.retry!(self)
+    def cancel! = workflow_class.cancel!(self)
+    def resume_from_human(input: nil) = workflow_class.resume_from_human(self, input: input)
   end
 end

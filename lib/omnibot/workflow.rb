@@ -79,6 +79,40 @@ module Omnibot
         run
       end
 
+      def resume_from_human(run, input: nil)
+        control(run, allowed: %w[waiting_for_human]) do
+          run.update!(status: "running")
+          Runner.new(run).enter(run.current_step.to_sym, input: input)
+        end
+      end
+
+      def retry!(run)
+        control(run, allowed: %w[failed]) do
+          run.update!(status: "running", error: nil)
+          Runner.new(run).enter(run.current_step.to_sym)
+        end
+      end
+
+      def cancel!(run)
+        control(run, allowed: WorkflowRun::ACTIVE_STATUSES) do
+          run.update!(status: "cancelled")
+        end
+      end
+
+      private
+
+      def control(run, allowed:)
+        run.reload
+        run.replies = []
+        run.with_lock do
+          unless allowed.include?(run.status)
+            raise WorkflowError::StaleResume, "cannot perform this on a #{run.status} run"
+          end
+          yield
+        end
+        run
+      end
+
       def inherited(subclass)
         super
         subclass.instance_variable_set(:@state_keys, state_keys.dup)
