@@ -176,12 +176,13 @@ The fake replays your script in order: `to_call_tool` asserts a tool is called a
 
 Everything is instrumented via `ActiveSupport::Notifications`, so you can wire usage logging, cost caps, or a dashboard without touching the gem:
 
-| Event | Payload |
+| Event | Payload keys |
 |---|---|
-| `omnibot.llm.call` | agent class, model, tokens in/out, duration, error? |
-| `omnibot.tool.call` | tool name, args, duration, error? |
-| `omnibot.agent.run` | agent class, turns used, fast_path hit?, total usage |
-| `omnibot.workflow.step` / `.transition` / `.handover` | *(coming in v0.2)* workflow class, run id, step, status |
+| `omnibot.llm.call` | `agent:` (agent class), `model:` (String), `usage:` (`Omnibot::Usage` — `input_tokens`/`output_tokens`) |
+| `omnibot.tool.call` | `tool:` (tool class), `args:` (Hash), `error:` (String, present only on failure) |
+| `omnibot.agent.run` | `agent:` (agent class), `fast_path:` (Boolean), `usage:` (`Omnibot::Usage`) |
+
+Timing is available on the event object itself (`event.duration`) for any subscribed event — it is not a payload key. Workflow events (`omnibot.workflow.*`) arrive with Workflow in v0.2.
 
 A minimal usage-log subscriber — the whole recipe is 4 lines:
 
