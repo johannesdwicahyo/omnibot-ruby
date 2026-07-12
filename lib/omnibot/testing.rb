@@ -34,6 +34,11 @@ module Omnibot
         @script << [:reply, text]
         self
       end
+
+      def then_extract(hash)
+        @script << [:reply, hash]
+        self
+      end
     end
 
     module Helpers
@@ -101,7 +106,7 @@ module Omnibot
       private
 
       def emit_reply(text, stream_block)
-        if stream_block
+        if stream_block && text.is_a?(String)
           text.split(/(?<= )/).each { |chunk| stream_block.call(FakeMessage.new(chunk, nil)) }
         end
         msg = FakeMessage.new(text, FakeTokens.new(10, 10))

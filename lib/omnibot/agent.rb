@@ -37,6 +37,10 @@ module Omnibot
       def run(message, history: [], context: {}, stream: nil)
         new(context).run(message, history: history, stream: stream)
       end
+
+      def extract(input, schema:, context: {})
+        new(context).extract(input, schema: schema)
+      end
     end
 
     attr_reader :context
@@ -60,6 +64,22 @@ module Omnibot
 
     # Called from within a fast_path block to short-circuit the run loop.
     def reply(text) = throw(FAST_REPLY, text)
+
+    def extract(input, schema:)
+      chat = Omnibot.chat_factory.call(model: self.class.model, agent_class: self.class)
+      chat.with_instructions(interpolated_instructions) if self.class.instructions
+      chat.with_schema(schema)
+
+      response = instrument_llm { chat.ask(input.to_s) }
+      parse_extraction(response.content) do
+        repair = instrument_llm do
+          chat.ask("Your previous output was not valid JSON. Respond again with ONLY valid JSON matching the schema.")
+        end
+        parse_extraction(repair.content) do
+          raise ExtractionError, "extraction failed after repair: #{repair.content.to_s.truncate(200)}"
+        end
+      end
+    end
 
     private
 
@@ -157,6 +177,20 @@ module Omnibot
 
     def strip_tools(chat)
       chat.with_tools(replace: true)
+    end
+
+    def parse_extraction(content)
+      case content
+      when Hash then content.deep_symbolize_keys
+      when String
+        begin
+          JSON.parse(content, symbolize_names: true)
+        rescue JSON::ParserError
+          yield
+        end
+      else
+        yield
+      end
     end
 
     def normalize_message(m)
