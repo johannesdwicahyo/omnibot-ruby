@@ -38,6 +38,9 @@ module Omnibot
         end
       end
 
+      # Placeholder — polling ships in Task 7.
+      def poll_tick(step); end
+
       private
 
       def record_entry(step)
@@ -49,6 +52,11 @@ module Omnibot
         @run.timer_token += 1
         @run.step_entered_at = Time.current
         @run.save!
+
+        if (t = @workflow.timeouts[step])
+          WorkflowTimerJob.set(wait: t[:after])
+                          .perform_later(@run.id, step.to_s, @run.timer_token, "timeout")
+        end
       end
 
       def execute_body(step, ctx)
