@@ -1,0 +1,99 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Live smoke test — the release gate before `gem push`.
+# Validates against a REAL provider what the offline suite structurally cannot:
+#   1. max_turns recovery (no dangling tool_use → no HTTP 400)
+#   2. tool-loop round trip + run-level usage summing
+#   3. structured extraction via RubyLLM::Schema
+#   4. streaming chunk contract (non-empty Strings)
+#
+# Usage: OPENAI_API_KEY=sk-... bundle exec ruby bin/smoke
+# Cost: a few hundred tokens on gpt-4o-mini (well under $0.01).
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "omnibot"
+require "ruby_llm/schema"
+
+abort "OPENAI_API_KEY not set" unless ENV["OPENAI_API_KEY"]
+
+RubyLLM.configure { |c| c.openai_api_key = ENV.fetch("OPENAI_API_KEY") }
+Omnibot.configure { |c| c.default_model = ENV.fetch("SMOKE_MODEL", "gpt-4o-mini") }
+
+failures = []
+check = lambda do |name, ok, detail = nil|
+  puts format("%-42s %s%s", name, ok ? "PASS" : "FAIL", detail ? "  (#{detail})" : "")
+  failures << name unless ok
+end
+
+# --- 1. max_turns recovery: the C1 path. The tool begs to be called again;
+#        max_turns 1 forces TurnLimit on the 2nd call → synthetic tool result
+#        → final ask. A dangling tool_use would 400 here.
+class LoopyAgent < Omnibot::Agent
+  instructions "You are a counter. Call the count tool repeatedly until it says stop."
+  max_turns 1
+
+  tool :count, "Counts up. Call it again with n+1 until told to stop." do |n:|
+    "counted #{n}. You must call count again with n=#{n.to_i + 1}."
+  end
+end
+
+begin
+  r = LoopyAgent.run("Start counting from 1.")
+  check.call("turn-limit recovery (no provider 400)", !r.text.to_s.empty?, "#{r.tool_calls.length} tool call(s)")
+rescue StandardError => e
+  check.call("turn-limit recovery (no provider 400)", false, "#{e.class}: #{e.message.to_s[0, 120]}")
+end
+
+# --- 2. normal tool loop + usage summing across the run
+class OrderAgent < Omnibot::Agent
+  instructions "You are a support agent. Use tools to answer."
+
+  tool :lookup_order, "Find an order's status by its ID" do |order_id:|
+    "Order #{order_id}: shipped yesterday via JNE."
+  end
+end
+
+begin
+  r = OrderAgent.run("Where is order 123?")
+  check.call("tool loop answers", r.text.downcase.include?("ship") || r.text.include?("JNE"), r.text[0, 60])
+  check.call("tool was called with real args", r.tool_calls.any? { |tc| tc.name == "lookup_order" },
+             r.tool_calls.map { |tc| "#{tc.name}(#{tc.arguments})" }.join(", ")[0, 80])
+  check.call("run usage sums to > 0 tokens", r.usage.input_tokens.positive? && r.usage.output_tokens.positive?,
+             "in=#{r.usage.input_tokens} out=#{r.usage.output_tokens}")
+rescue StandardError => e
+  check.call("tool loop answers", false, "#{e.class}: #{e.message.to_s[0, 120]}")
+end
+
+# --- 3. structured extraction
+class TransferSchema < RubyLLM::Schema
+  string :bank, description: "Bank name"
+  integer :amount, description: "Transfer amount in rupiah"
+end
+
+begin
+  data = OrderAgent.extract("Customer says: sudah transfer 50000 rupiah via BCA", schema: TransferSchema)
+  check.call("extraction returns symbolized hash", data.is_a?(Hash) && data[:amount] == 50_000 && data[:bank].to_s.upcase.include?("BCA"),
+             data.inspect[0, 80])
+rescue StandardError => e
+  check.call("extraction returns symbolized hash", false, "#{e.class}: #{e.message.to_s[0, 120]}")
+end
+
+# --- 4. streaming contract: non-empty String chunks that join into the reply
+begin
+  chunks = []
+  r = OrderAgent.run("Say hello in exactly five words.", stream: ->(c) { chunks << c })
+  all_strings = chunks.any? && chunks.all? { |c| c.is_a?(String) && !c.empty? }
+  check.call("streaming yields non-empty Strings", all_strings, "#{chunks.length} chunks")
+  check.call("streamed text matches result text", chunks.join == r.text)
+rescue StandardError => e
+  check.call("streaming yields non-empty Strings", false, "#{e.class}: #{e.message.to_s[0, 120]}")
+end
+
+puts
+if failures.empty?
+  puts "SMOKE GREEN — release gate passed."
+else
+  puts "SMOKE RED — #{failures.length} failure(s): #{failures.join('; ')}"
+  exit 1
+end
