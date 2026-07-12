@@ -4,6 +4,8 @@ module Omnibot
 
     # Runs inside run.with_lock, always.
     class Runner
+      MAX_STEPS_PER_ACTIVATION = 100
+
       def initialize(run)
         @run = run
         @workflow = run.workflow_class
@@ -12,7 +14,13 @@ module Omnibot
       # Enter `step` (fresh entry or re-entry), then follow transitions
       # until an interrupt, terminal step, or error stops the loop.
       def enter(step, input: nil)
+        iterations = 0
         loop do
+          iterations += 1
+          if iterations > MAX_STEPS_PER_ACTIVATION
+            return fail_run("activation exceeded #{MAX_STEPS_PER_ACTIVATION} step entries " \
+                             "(transition loop at :#{step}?)")
+          end
           record_entry(step)
           ctx = ExecutionContext.new(@run, @workflow, input)
           outcome = execute_body(step, ctx)
@@ -33,6 +41,8 @@ module Omnibot
       private
 
       def record_entry(step)
+        # attempts.positive? distinguishes a genuine first entry (attempts=0, current_step
+        # pre-seeded by create!) from a re-entry into the same step.
         same = @run.current_step == step.to_s && @run.attempts.positive?
         @run.attempts    = same ? @run.attempts + 1 : 1
         @run.current_step = step.to_s
@@ -55,6 +65,7 @@ module Omnibot
           interrupted ? { interrupt: interrupted } : { completed: true }
         rescue StandardError => e
           payload[:error] = e.message
+          payload[:status] = "failed"
           { error: e }
         end
       end
@@ -76,7 +87,13 @@ module Omnibot
 
       def complete(terminal_step)
         if terminal_step == :done && (hook = @workflow.on_complete_hook)
-          ExecutionContext.new(@run, @workflow, nil).instance_exec(&hook)
+          begin
+            ExecutionContext.new(@run, @workflow, nil).instance_exec(&hook)
+          rescue StandardError => e
+            # ponytail: a completed workflow whose hook failed lands in failed — retry! re-runs the
+            # FINAL step, so hooks should be idempotent
+            return fail_run("on_complete hook raised: #{e.message}")
+          end
         end
         @run.update!(status: terminal_step.to_s)
       end

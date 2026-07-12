@@ -89,4 +89,40 @@ RSpec.describe "Workflow engine core" do
     end)
     expect(flow.start.timer_token).to eq(2)
   end
+
+  it "includes status alongside error in the omnibot.workflow.step event when a step raises" do
+    flow = stub_const("BoomEventFlow", Class.new(Omnibot::Workflow) do
+      step(:boom) { raise "kaput on the error path" }
+      transition from: :boom, to: :done
+    end)
+    events = []
+    ActiveSupport::Notifications.subscribed(->(*a) { events << a.last }, "omnibot.workflow.step") do
+      flow.start
+    end
+    expect(events.last).to include(error: "kaput on the error path", status: "failed")
+  end
+
+  it "records failure instead of raising when an on_complete hook raises" do
+    flow = stub_const("BadHookFlow", Class.new(Omnibot::Workflow) do
+      step(:only) { }
+    end)
+    flow.on_complete { raise "hook exploded" }
+    run = nil
+    expect { run = flow.start }.not_to raise_error
+    expect(run.status).to eq("failed")
+    expect(run.error).to match(/on_complete hook raised/)
+  end
+
+  it "caps steps per activation to stop an unconditional self-loop from spinning forever" do
+    flow = stub_const("SelfLoopFlow", Class.new(Omnibot::Workflow) do
+      step(:a) { }
+      step(:b) { }
+      transition from: :a, to: :b
+      transition from: :b, to: :a
+    end)
+    run = nil
+    expect { run = flow.start }.not_to raise_error
+    expect(run.status).to eq("failed")
+    expect(run.error).to match(/transition loop/)
+  end
 end
