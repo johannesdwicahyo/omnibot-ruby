@@ -1,0 +1,12 @@
+require "rails_helper"
+
+RSpec.describe <%= class_name %>Workflow do
+  it "asks, waits, and completes on input" do
+    run = <%= class_name %>Workflow.start
+    expect(run.status).to eq("waiting_for_input")
+    expect(run.replies).to eq(["What can I help you with?"])
+
+    run = <%= class_name %>Workflow.resume(run, input: "hello")
+    expect(run.status).to eq("done")
+  end
+end

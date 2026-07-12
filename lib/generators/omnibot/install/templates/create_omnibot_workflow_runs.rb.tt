@@ -1,0 +1,19 @@
+class CreateOmnibotWorkflowRuns < ActiveRecord::Migration[7.1]
+  def change
+    create_table :omnibot_workflow_runs do |t|
+      t.string :type, null: false
+      t.string :status, null: false
+      t.string :current_step
+      # On PostgreSQL you may change this to t.jsonb
+      t.json :state, default: {}
+      t.integer :attempts, default: 0, null: false
+      t.datetime :step_entered_at
+      t.integer :timer_token, default: 0, null: false
+      t.references :ref, polymorphic: true, index: true
+      t.text :error
+      t.timestamps
+    end
+    add_index :omnibot_workflow_runs, :status
+    add_index :omnibot_workflow_runs, [:type, :status]
+  end
+end

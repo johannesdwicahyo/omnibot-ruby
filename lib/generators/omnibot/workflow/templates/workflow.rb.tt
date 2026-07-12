@@ -1,0 +1,16 @@
+class <%= class_name %>Workflow < Omnibot::Workflow
+  state :example_field
+
+  step :ask do
+    reply "What can I help you with?"
+    wait_for_input                     # checkpoint: resumes on the next message
+  end
+
+  step :handle do
+    state.example_field = input
+  end
+
+  transition from: :ask, to: :handle
+  transition from: :handle, to: :done
+  timeout :ask, after: 30.minutes, to: :expired
+end
