@@ -37,6 +37,17 @@ module Omnibot
         @while_running = mode
       end
 
+      def start(ref: nil, state: {})
+        first = steps.keys.first or raise WorkflowError, "#{name} declares no steps"
+        run = WorkflowRun.create!(
+          type: name, status: "running", current_step: first.to_s,
+          state: state.transform_keys(&:to_s), attempts: 0, timer_token: 0,
+          step_entered_at: Time.current, ref: ref
+        )
+        run.with_lock { Runner.new(run).enter(first) }
+        run
+      end
+
       def inherited(subclass)
         super
         subclass.instance_variable_set(:@state_keys, state_keys.dup)
