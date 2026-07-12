@@ -42,6 +42,17 @@ RSpec.describe "Workflow poll steps" do
     expect(run.reload.status).to eq("expired")
   end
 
+  it "fails the run when poll_again is called from a non-poll step" do
+    flow = stub_const("NoPoll", Class.new(Omnibot::Workflow) do
+      step(:plain) { poll_again }
+      transition from: :plain, to: :done
+    end)
+    run = nil
+    expect { run = flow.start }.not_to raise_error
+    expect(run.status).to eq("failed")
+    expect(run.error).to match(/poll_again called from non-poll step/)
+  end
+
   it "routes exhaustion to a declared timeout target instead" do
     queue = %i[pending pending pending pending]
     stub_const("GW2", -> { queue.shift })
@@ -55,7 +66,11 @@ RSpec.describe "Workflow poll steps" do
       timeout :watch, after: 3600, to: :escalate
     end)
     run = flow.start
-    2.times { perform_enqueued_jobs }
+    # Drive poll ticks directly (bypassing the generic timeout job) so the
+    # assertion proves poll_tick's exhaustion routing, not the timeout path.
+    # Tick 2 runs the body (pending, reschedules); tick 3 sees attempts 2 >= 2
+    # and routes to :escalate.
+    2.times { Omnibot::WorkflowTimerJob.perform_now(run.id, "watch", run.reload.timer_token, "poll") }
     expect(run.reload.status).to eq("waiting_for_human")
     expect(run.current_step).to eq("escalate")
   end

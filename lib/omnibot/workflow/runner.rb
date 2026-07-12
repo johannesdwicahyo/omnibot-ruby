@@ -129,6 +129,7 @@ module Omnibot
 
       def schedule_poll(step)
         poll = @workflow.steps.fetch(step)[:poll]
+        return fail_run("poll_again called from non-poll step :#{step}") if poll.nil?
         @run.update!(status: "running")
         WorkflowTimerJob.set(wait: poll[:every])
                         .perform_later(@run.id, step.to_s, @run.timer_token, "poll")
