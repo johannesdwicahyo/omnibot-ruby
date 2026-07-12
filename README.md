@@ -54,9 +54,11 @@ result.usage.input_tokens
 
 Semantics worth knowing:
 
-- The loop is: send → execute tool calls → append results → repeat, up to `max_turns`. On the final turn, tools are unbound so the model is forced to answer instead of looping forever.
+- The loop is: send → execute tool calls → append results → repeat, up to `max_turns`. On the final turn, tools are unbound so the model is forced to answer instead of looping forever. `max_turns` bounds the number of tool executions in a run (parallel tool calls each count) — not conversation rounds.
 - `instructions` support `{{var}}` interpolation from `context`; a missing variable raises `KeyError`.
 - `history` is a plain array of `{ role:, content: }` hashes (or anything that responds to `#role`/`#content`) — the gem never persists conversations itself.
+- A custom `Omnibot.chat_factory` lambda must accept extra kwargs (e.g. `->(model:, **) { ... }`) — Agent always calls it with `agent_class:` in addition to `model:`.
+- Block-tool params are always JSON type `"string"` — models send `"123"`, not `123`. Declare param types via class-form tools (`param :n, type: "integer"`) when types matter.
 - Class-form tools must declare `param` explicitly — the wrapper that adds error capture shadows `#execute`'s signature, so ruby_llm's automatic param inference doesn't see your keyword args:
 
   ```ruby
@@ -179,8 +181,10 @@ Everything is instrumented via `ActiveSupport::Notifications`, so you can wire u
 | Event | Payload keys |
 |---|---|
 | `omnibot.llm.call` | `agent:` (agent class), `model:` (String), `usage:` (`Omnibot::Usage` — `input_tokens`/`output_tokens`) |
-| `omnibot.tool.call` | `tool:` (tool class), `args:` (Hash), `error:` (String, present only on failure) |
+| `omnibot.tool.call` | `tool:` (tool class), `name:` (String), `args:` (Hash), `error:` (String, present only on failure) |
 | `omnibot.agent.run` | `agent:` (agent class), `fast_path:` (Boolean), `usage:` (`Omnibot::Usage`) |
+
+`omnibot.llm.call`'s `usage:` is per-call (that one provider round trip's final response). `omnibot.agent.run`'s `usage:` is the run total, summed across every provider round trip in the run — a single `Agent.run` can be several `omnibot.llm.call`s deep when the tool-calling loop goes more than one turn.
 
 Timing is available on the event object itself (`event.duration`) for any subscribed event — it is not a payload key. Workflow events (`omnibot.workflow.*`) arrive with Workflow in v0.2.
 
