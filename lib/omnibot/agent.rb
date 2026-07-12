@@ -2,6 +2,8 @@ module Omnibot
   class Agent
     class TurnLimit < StandardError; end
 
+    FAST_REPLY = :__omnibot_fast_reply
+
     class << self
       def model(value = nil)
         value ? @model = value : (@model || Omnibot.config.default_model)
@@ -21,6 +23,7 @@ module Omnibot
 
       def tools = @tools ||= []
       def fast_paths = @fast_paths ||= []
+      def fast_path(&block) = fast_paths << block
 
       def inherited(subclass)
         super
@@ -55,9 +58,17 @@ module Omnibot
     # Override in subclasses to gate tools per run (context-aware).
     def tools_for(_context) = self.class.tools
 
+    # Called from within a fast_path block to short-circuit the run loop.
+    def reply(text) = throw(FAST_REPLY, text)
+
     private
 
     def run_loop(message, history, stream)
+      if (text = try_fast_paths(message))
+        return Result.new(text: text, tool_calls: [], usage: Usage.new(0, 0),
+                           messages: [], fast_path: true)
+      end
+
       @history_for_build = history
       chat = build_chat
       tool_calls = []
@@ -87,6 +98,17 @@ module Omnibot
         messages: chat.messages.map { |m| normalize_message(m) },
         fast_path: false
       )
+    end
+
+    def try_fast_paths(message)
+      self.class.fast_paths.each do |block|
+        result = catch(FAST_REPLY) do
+          instance_exec(message, context, &block)
+          nil
+        end
+        return result if result
+      end
+      nil
     end
 
     def build_chat
