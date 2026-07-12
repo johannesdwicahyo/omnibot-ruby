@@ -44,7 +44,38 @@ module Omnibot
           state: state.transform_keys(&:to_s), attempts: 0, timer_token: 0,
           step_entered_at: Time.current, ref: ref
         )
+        run.replies = []
         run.with_lock { Runner.new(run).enter(first) }
+        run
+      end
+
+      def resume(run, input: nil)
+        run.reload
+        run.replies = []
+        run.with_lock do
+          case run.status
+          when "waiting_for_input"
+            step = run.current_step.to_sym
+            ctx = ExecutionContext.new(run, self, input)
+            runner = Runner.new(run)
+            nxt = runner.send(:next_step_from, step, ctx)
+            break if nxt.nil?
+            if TERMINAL_STEPS.include?(nxt)
+              runner.send(:complete, nxt)
+            else
+              runner.enter(nxt, input: input)
+            end
+          when "running"
+            if while_running == :interrupt
+              raise NotImplementedError, "while_running :interrupt ships in v0.3"
+            end
+            # :ignore — return unchanged
+          when "waiting_for_human"
+            raise WorkflowError::StaleResume, "use resume_from_human for waiting_for_human runs"
+          else
+            raise WorkflowError::StaleResume, "cannot resume a #{run.status} run"
+          end
+        end
         run
       end
 
