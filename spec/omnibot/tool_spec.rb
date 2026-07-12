@@ -44,6 +44,15 @@ RSpec.describe Omnibot::Tool do
     expect(events.first[:args]).to eq({ a: 1, b: 2 })
   end
 
+  it "includes the tool's own #name in omnibot.tool.call (I6: usable for anonymous block-tool classes)" do
+    klass = described_class.from_block(:shout, "Upcases") { |text:| text.upcase }
+    events = []
+    ActiveSupport::Notifications.subscribed(->(*args) { events << args.last }, "omnibot.tool.call") do
+      klass.new.execute(text: "hi")
+    end
+    expect(events.first[:name]).to eq("shout")
+  end
+
   describe ".from_block" do
     it "builds a named tool whose execute runs the block" do
       klass = described_class.from_block(:shout, "Upcases") { |text:| text.upcase }

@@ -34,7 +34,7 @@ module Omnibot
     module SafeExecute
       def execute(**kwargs)
         ActiveSupport::Notifications.instrument(
-          "omnibot.tool.call", tool: self.class, args: kwargs
+          "omnibot.tool.call", tool: self.class, name: name, args: kwargs
         ) do |payload|
           super
         rescue StandardError => e
