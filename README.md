@@ -4,7 +4,7 @@ Rails-first LLM agents for Ruby.
 
 ## Why
 
-`omnibot-ruby` is a Rails-idiomatic agent framework built on [`ruby_llm`](https://github.com/crmne/ruby_llm) — a class DSL for bounded tool-calling agents that lives in your Rails app, not a Python sidecar you have to deploy, proxy, and keep in sync. It ships two primitives: **Agent** (v0.1, available now — a bounded tool-calling loop with fast paths, structured extraction, and streaming) and **Workflow** (coming in v0.2 — a durable, ActiveRecord-checkpointed graph engine for multi-step conversations with human handover, so long-running flows survive restarts without a Redis checkpointer). Everything runs in-process, which means token streaming to ActionCable/Turbo is a callback away instead of blocked behind an HTTP hop.
+`omnibot-ruby` is a Rails-idiomatic agent framework built on [`ruby_llm`](https://github.com/crmne/ruby_llm) — a class DSL for bounded tool-calling agents that lives in your Rails app, not a Python sidecar you have to deploy, proxy, and keep in sync. It ships two primitives: **Agent** (a bounded tool-calling loop with fast paths, structured extraction, and streaming) and **Workflow** (v0.2 — a durable, ActiveRecord-checkpointed graph engine for multi-step conversations with human handover, so long-running flows survive restarts without a Redis checkpointer). Everything runs in-process, which means token streaming to ActionCable/Turbo is a callback away instead of blocked behind an HTTP hop.
 
 ## Install
 
@@ -174,6 +174,83 @@ end
 
 The fake replays your script in order: `to_call_tool` asserts a tool is called and actually executes it (so bugs in your tool body still surface), `then_reply` ends the turn with a text reply, and `then_extract` ends it with a Hash for `Agent.extract` specs. If the script runs out, unscripted calls get a default `"(fake) <message>"` reply so runaway loops fail loudly instead of hanging. Class-form tools are plain Ruby objects — unit-test them directly, no fake required.
 
+## Durable workflows
+
+`Omnibot::Workflow` is a checkpoint-per-step graph engine for multi-step conversations that must survive a restart between messages: steps are nodes, transitions are edges, state persists as jsonb on a gem-owned `omnibot_workflow_runs` table. No Redis checkpointer, no graph compilation, no sidecar — it's ActiveRecord and ActiveJob, which your Rails app already has.
+
+```bash
+rails g omnibot:install       # also creates the omnibot_workflow_runs migration (skipped if it exists)
+rails g omnibot:workflow DepositCheck
+```
+
+```ruby
+class DepositCheckWorkflow < Omnibot::Workflow
+  state :amount, :bank, :paid
+
+  step :ask_for_proof do
+    reply "Please upload your transfer receipt 🙏"
+    wait_for_input                              # checkpoint: pause and persist; resumes on the next message
+  end
+
+  step :extract_proof do
+    proof = ProofAgent.extract(input, schema: Class.new)   # input = what resume() received
+    state.amount = proof[:amount]
+    state.bank = proof[:bank]
+    reply "Got it — Rp#{state.amount} via #{state.bank}. Checking with the gateway…"
+  end
+
+  step :watch_gateway, poll: { every: 5, max_attempts: 5 } do
+    status = gateway_check
+    if status == :pending
+      reply "Still checking with the gateway… (attempt #{attempts})"
+      poll_again                                # schedule the next tick, stop this one
+    end
+    state.paid = (status == :paid)
+  end
+
+  transition from: :ask_for_proof, to: :extract_proof
+  transition from: :extract_proof, to: :watch_gateway
+  transition from: :watch_gateway, to: :done, if: -> { state.paid }
+  transition from: :watch_gateway, to: :failed
+end
+
+run = DepositCheckWorkflow.start
+run.status          # => "waiting_for_input"
+run.replies         # => ["Please upload your transfer receipt 🙏"]
+
+run = DepositCheckWorkflow.resume(run, input: "transfer 50rb via BCA, receipt attached")
+run.status          # => "running" — now polling the gateway on an ActiveJob timer
+run.current_step    # => "watch_gateway"
+run.state["amount"] # => 50_000
+```
+
+This is the same flow as `examples/deposit_check.rb` (runnable: `bundle exec ruby examples/deposit_check.rb`) and `spec/omnibot/workflow_integration_spec.rb` — copy-paste it and swap in your own agent/gateway calls.
+
+A step body runs at most once per entry: `wait_for_input` throws out of the step immediately (statements after it never run), so bodies need no idempotence gymnastics. After a step returns normally, transitions are evaluated in declaration order — first matching `if:` wins (unconditional always matches) — and the run walks into the next step in the same activation, stopping only at `wait_for_input`, `handover!`, a poll schedule, a terminal step (`:done`, `:expired`, `:failed`, `:cancelled`, or any user step with no outgoing transitions), or an exception (→ `failed`, with `run.error` set).
+
+**Replies have two delivery paths.** Foreground activations (`start`/`resume`) return the activation's replies on `run.replies`. Background activations — a poll tick or a timeout firing via `Omnibot::WorkflowTimerJob` — have no caller to return to, so `reply` *always* also emits `omnibot.workflow.reply`; that's the one seam for both. Bridge it to your message provider with a one-line subscriber:
+
+```ruby
+ActiveSupport::Notifications.subscribe("omnibot.workflow.reply") do |event|
+  YourMessenger.send(event.payload[:run_id], event.payload[:text])
+end
+```
+
+**Human handover and control operations:**
+
+```ruby
+run.status              # => "waiting_for_human" after a step calls handover!(reason: "...")
+run.resume_from_human    # re-enters the current step as a fresh attempt
+run.retry!               # re-enters a *failed* run's current step (attempts increments)
+run.cancel!               # any active run -> "cancelled"; raises Omnibot::WorkflowError::StaleResume if already terminal
+```
+
+Resuming a `waiting_for_input` run twice, or resuming a terminal run, raises `Omnibot::WorkflowError::StaleResume`. `while_running :ignore` (the default) makes `resume` on a still-`running` run a no-op that returns it unchanged — this is the only mode v0.2 implements; `while_running :interrupt` (abort the in-flight step and apply the new input immediately) is documented but raises `NotImplementedError` and ships in v0.3.
+
+Timers (`timeout :step, after:, to:`, and poll's `every:`) are ActiveJob, scheduled with `set(wait:)`, and stale-checked against a per-entry `timer_token` before they act — a fired timer from a step the run has since left is a safe no-op. **Running the example:** the demo and integration spec use ActiveJob's `:test` adapter with `perform_enqueued_jobs`, not `:inline` — `InlineAdapter#enqueue_at` isn't implemented in any ActiveJob version we've checked, so `:inline` can't run a `poll`/`timeout` step at all. See "Production queue adapters" below for real deployments.
+
+**Production queue adapters:** schedule jobs fire through `Omnibot::WorkflowTimerJob` via ActiveJob, so `wait:` timing depends on your adapter's `enqueue_at` support (Sidekiq, Sidekiq Cron, GoodJob, etc. all handle it — `:inline` and `:async` don't). On Rails 7.2+, set `Omnibot::WorkflowTimerJob.enqueue_after_transaction_commit = true` so a timer scheduled inside a still-open transaction doesn't fire before the transaction commits. If you can't set that (older Rails), a rolled-back activation may still enqueue a harmless no-op job — the job re-checks `status`/`current_step`/`timer_token` under `with_lock` before doing anything, so the stale timer just finds nothing to do (the `timer_token` guard makes it self-healing).
+
 ## Instrumentation
 
 Everything is instrumented via `ActiveSupport::Notifications`, so you can wire usage logging, cost caps, or a dashboard without touching the gem:
@@ -186,7 +263,17 @@ Everything is instrumented via `ActiveSupport::Notifications`, so you can wire u
 
 `omnibot.llm.call`'s `usage:` is per-call (that one provider round trip's final response). `omnibot.agent.run`'s `usage:` is the run total, summed across every provider round trip in the run — a single `Agent.run` can be several `omnibot.llm.call`s deep when the tool-calling loop goes more than one turn.
 
-Timing is available on the event object itself (`event.duration`) for any subscribed event — it is not a payload key. Workflow events (`omnibot.workflow.*`) arrive with Workflow in v0.2.
+Workflow (v0.2) emits its own events on the same seam:
+
+| Event | Payload keys |
+|---|---|
+| `omnibot.workflow.step` | `workflow:` (Workflow class), `run_id:`, `step:` (Symbol), `attempts:` (Integer), `status:` (String, the run's status after the step body ran), `error:` (String, present only when the step raised) |
+| `omnibot.workflow.transition` | `workflow:`, `run_id:`, `from:` (Symbol), `to:` (Symbol) |
+| `omnibot.workflow.reply` | `workflow:`, `run_id:`, `step:` (String — `run.current_step`), `text:` (String) |
+| `omnibot.workflow.handover` | `workflow:`, `run_id:`, `step:` (String), `reason:` (whatever was passed to `handover!`) |
+| `omnibot.workflow.timeout` | `workflow:`, `run_id:`, `step:` (Symbol) |
+
+Timing is available on the event object itself (`event.duration`) for any subscribed event — it is not a payload key.
 
 A minimal usage-log subscriber — the whole recipe is 4 lines:
 
@@ -201,8 +288,9 @@ Nothing in the gem phones home, ever — instrumentation is a local seam you sub
 
 ## Roadmap
 
-- **v0.2 — Workflow.** A durable, ActiveRecord-checkpointed graph engine for multi-step conversations: steps as nodes, transitions as edges, `wait_for_input` to checkpoint and pause for the next inbound message, `handover!` to page a human. State persists as jsonb on a gem-owned `omnibot_workflow_runs` table, so a workflow survives a deploy or a restart mid-conversation without a Redis checkpointer.
-- **Later — hosted observability.** A subscriber gem plus a hosted dashboard, built entirely on the instrumentation events above. Paid, optional, and no core changes required to adopt it.
+- **v0.2 — Workflow. Shipped.** A durable, ActiveRecord-checkpointed graph engine for multi-step conversations: steps as nodes, transitions as edges, `wait_for_input` to checkpoint and pause for the next inbound message, `handover!` to page a human. State persists as jsonb on a gem-owned `omnibot_workflow_runs` table, so a workflow survives a deploy or a restart mid-conversation without a Redis checkpointer. See [Durable workflows](#durable-workflows) above.
+- **Next — hosted observability.** A subscriber gem plus a hosted dashboard, built entirely on the instrumentation events above (Agent and Workflow both). Paid, optional, and no core changes required to adopt it.
+- **Next — `while_running :interrupt`.** Full semantics for aborting an in-flight step when a new message arrives mid-activation, if demand shows up; `:ignore` is the only implemented mode today.
 
 ## License
 

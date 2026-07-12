@@ -90,6 +90,53 @@ rescue StandardError => e
   check.call("streaming yields non-empty Strings", false, "#{e.class}: #{e.message.to_s[0, 120]}")
 end
 
+# --- 5. offline workflow check: Workflow never touches a provider, so this
+#        proves the durable engine (checkpoint -> resume -> done) works
+#        without spending a token, same schema-define pattern as
+#        examples/deposit_check.rb.
+require "active_record"
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Base.logger = nil
+ActiveRecord::Schema.verbose = false
+ActiveRecord::Schema.define do
+  create_table :omnibot_workflow_runs do |t|
+    t.string :type, null: false
+    t.string :status, null: false
+    t.string :current_step
+    t.json :state, default: {}
+    t.integer :attempts, default: 0, null: false
+    t.datetime :step_entered_at
+    t.integer :timer_token, default: 0, null: false
+    t.string :ref_type
+    t.bigint :ref_id
+    t.text :error
+    t.timestamps
+  end
+end
+
+class SmokeWorkflow < Omnibot::Workflow
+  state :answer
+
+  step(:ask) do
+    reply "What is your order id?"
+    wait_for_input
+  end
+  step(:record) { state.answer = input }
+
+  transition from: :ask, to: :record
+  transition from: :record, to: :done
+end
+
+begin
+  run = SmokeWorkflow.start
+  run = SmokeWorkflow.resume(run, input: "ORDER-9")
+  check.call("offline workflow: wait_for_input -> resume -> done",
+             run.status == "done" && run.state["answer"] == "ORDER-9",
+             "status=#{run.status} answer=#{run.state['answer'].inspect}")
+rescue StandardError => e
+  check.call("offline workflow: wait_for_input -> resume -> done", false, "#{e.class}: #{e.message.to_s[0, 120]}")
+end
+
 puts
 if failures.empty?
   puts "SMOKE GREEN — release gate passed."

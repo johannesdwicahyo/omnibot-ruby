@@ -73,7 +73,10 @@ class DepositCheckWorkflow < Omnibot::Workflow
   step :watch_gateway, poll: { every: 5, max_attempts: 5 } do
     status = gateway_check
     puts "  ⏱  gateway says: #{status} (attempt #{attempts})"
-    poll_again if status == :pending
+    if status == :pending
+      reply "Still checking with the gateway… (attempt #{attempts})"
+      poll_again
+    end
     state.paid = (status == :paid)
   end
 
