@@ -56,5 +56,12 @@ RSpec.describe Omnibot::Tool do
       klass = described_class.from_block(:who, "Company") { |**| context[:company] }
       expect(klass.new(company: "Wokku").execute).to eq("Wokku")
     end
+
+    it "declares params from the block signature so the schema is correct" do
+      klass = described_class.from_block(:trim, "Trims") { |text:, limit: nil| text[0, limit || 10] }
+      schema = klass.new.params_schema
+      expect(schema["properties"].keys).to contain_exactly("text", "limit")
+      expect(schema["required"]).to eq(["text"])
+    end
   end
 end
