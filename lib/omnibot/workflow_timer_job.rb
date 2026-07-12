@@ -23,7 +23,7 @@ module Omnibot
             runner.enter(target)
           end
         when "poll"
-          Workflow::Runner.new(run).poll_tick(step.to_sym) # implemented in Task 7
+          Workflow::Runner.new(run).poll_tick(step.to_sym)
         end
       end
     end

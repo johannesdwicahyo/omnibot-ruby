@@ -27,6 +27,7 @@ module Omnibot
           case outcome
           in { interrupt: :wait_input } then return checkpoint("waiting_for_input")
           in { interrupt: :handover }   then return checkpoint("waiting_for_human")
+          in { interrupt: :poll_again } then return schedule_poll(step)
           in { error: e }               then return fail_run(e.message)
           in { completed: true }
             input = nil # input is consumed by the first step that runs after resume
@@ -38,8 +39,20 @@ module Omnibot
         end
       end
 
-      # Placeholder — polling ships in Task 7.
-      def poll_tick(step); end
+      def poll_tick(step)
+        poll = @workflow.steps.fetch(step)[:poll]
+        if @run.attempts >= poll[:max_attempts]
+          target = @workflow.timeouts[step]&.fetch(:to) || :expired
+          if TERMINAL_STEPS.include?(target)
+            complete(target)
+          else
+            @run.update!(status: "running")
+            enter(target)
+          end
+          return
+        end
+        enter(step)
+      end
 
       private
 
@@ -113,6 +126,13 @@ module Omnibot
       def checkpoint(status)
         @run.update!(status: status)
       end
+
+      def schedule_poll(step)
+        poll = @workflow.steps.fetch(step)[:poll]
+        @run.update!(status: "running")
+        WorkflowTimerJob.set(wait: poll[:every])
+                        .perform_later(@run.id, step.to_s, @run.timer_token, "poll")
+      end
     end
 
     class ExecutionContext
@@ -147,7 +167,7 @@ module Omnibot
         throw(INTERRUPT, :handover)
       end
 
-      def poll_again = throw(INTERRUPT, :poll_again) # wired fully in Task 7
+      def poll_again = throw(INTERRUPT, :poll_again)
 
       private
 
