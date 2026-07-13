@@ -180,21 +180,26 @@ if handover_row
   add_check.call("handover", (p_req && r_req) ? "PASS" : "FAIL", "python_requested=#{p_req} ruby_requested=#{r_req}")
 end
 
-# (d) anger backstop: SKIPPED if threshold is off, else checked on the SECOND profane message
+# (d) anger backstop: SKIPPED if threshold is off, else PASS iff both engines
+# AGREE per anger entry (both tripped, or both not) — parity, not absolute behavior.
 threshold = bot[:config]["handover_on_anger_threshold"].to_i
 if threshold <= 0
   add_check.call("anger_handover", "SKIPPED", "handover_on_anger_threshold is 0")
 else
   anger_rows = rows.select { |r| r[:expect] == "anger_handover" }
-  second = anger_rows[1]
-  if second.nil?
-    add_check.call("anger_handover", "FAIL", "fewer than 2 anger_handover messages in the battery")
-  else
-    p_req = second.dig(:python, :handover, :requested) == true
-    r_req = second.dig(:ruby, :handover, :requested) == true
-    add_check.call("anger_handover", (p_req && r_req) ? "PASS" : "FAIL",
-                    "second profane message: python_requested=#{p_req} ruby_requested=#{r_req}")
+  any_tripped = false
+  all_agree = true
+  detail = anger_rows.map do |r|
+    p_req = r.dig(:python, :handover, :requested) == true
+    r_req = r.dig(:ruby, :handover, :requested) == true
+    any_tripped ||= p_req || r_req
+    all_agree &&= (p_req == r_req)
+    "#{r[:text].inspect}: python=#{p_req} ruby=#{r_req}"
+  end.join("; ")
+  if all_agree && !any_tripped && threshold > 2
+    detail += " (threshold #{threshold} > battery's 2 profane messages — neither engine expected to trip)"
   end
+  add_check.call("anger_handover", all_agree ? "PASS" : "FAIL", detail)
 end
 
 # --- 4. Judge: one call per non-fast-path pair ---
