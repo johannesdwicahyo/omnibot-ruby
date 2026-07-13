@@ -107,13 +107,15 @@ messages.each do |msg|
   end
 
   begin
+    # Reset BEFORE the run: if `run` raises after a tool already set a slot,
+    # stale values must not leak into the next message's captured state.
+    WicaraPoc.last_handover = nil
+    WicaraPoc.last_kb_results = nil
     t0 = Time.now
     result = agent_klass.run(text, history: window.call(ruby_history), context: { conversation_id: cid })
     latency_ms = ((Time.now - t0) * 1000).round
     handover = WicaraPoc.last_handover
     kb_rows = WicaraPoc.last_kb_results
-    WicaraPoc.last_handover = nil
-    WicaraPoc.last_kb_results = nil
     row[:ruby] = {
       reply: result.text,
       tool_calls: result.tool_calls.map { |tc| { name: tc.name, arguments: tc.arguments } },
@@ -149,7 +151,9 @@ else
   add_check.call("greeting_fast_path", ok ? "PASS" : "FAIL", detail)
 end
 
-# (b) KB citations: ruby's cited set must be subset-or-equal of python's
+# (b) KB citations: ruby's cited set must be subset-or-equal of python's.
+# Errored entries are reported in their detail but intentionally don't fail
+# this check — only Ruby exceptions gate the exit code, per spec.
 kb_rows = rows.select { |r| r[:expect] == "kb_answer" }
 kb_ok = true
 kb_detail = kb_rows.map do |r|
@@ -178,6 +182,8 @@ if handover_row
   p_req = handover_row.dig(:python, :handover, :requested) == true
   r_req = handover_row.dig(:ruby, :handover, :requested) == true
   add_check.call("handover", (p_req && r_req) ? "PASS" : "FAIL", "python_requested=#{p_req} ruby_requested=#{r_req}")
+else
+  add_check.call("handover", "SKIPPED", "no handover-expect entry in the battery")
 end
 
 # (d) anger backstop: SKIPPED if threshold is off, else PASS iff both engines
