@@ -1,0 +1,4 @@
+source "https://rubygems.org"
+gem "omnibot-ruby", path: "../.."
+gem "pg", "~> 1.5"
+gem "faraday", "~> 2.9"
