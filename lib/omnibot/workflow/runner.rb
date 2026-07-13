@@ -94,7 +94,15 @@ module Omnibot
       def next_step_from(step, ctx)
         rules = @workflow.transitions.select { |t| t[:from] == step }
         return :done if rules.empty? # terminal-by-absence
-        rule = rules.find { |t| t[:if].nil? || ctx.instance_exec(&t[:if]) }
+        rule = rules.find do |t|
+          next true if t[:if].nil?
+          begin
+            ctx.instance_exec(&t[:if])
+          rescue StandardError => e
+            fail_run("transition condition from :#{step} raised: #{e.message}")
+            return nil
+          end
+        end
         if rule.nil?
           fail_run("no transition matched from :#{step}")
           return nil

@@ -113,6 +113,17 @@ RSpec.describe "Workflow engine core" do
     expect(run.error).to match(/on_complete hook raised/)
   end
 
+  it "records failure instead of raising when a transition condition raises" do
+    flow = stub_const("CondBoomFlow", Class.new(Omnibot::Workflow) do
+      step(:a) { }
+      transition from: :a, to: :done, if: -> { raise "cond boom" }
+    end)
+    run = nil
+    expect { run = flow.start }.not_to raise_error
+    expect(run.status).to eq("failed")
+    expect(run.error).to match(/transition condition from :a raised: cond boom/)
+  end
+
   it "caps steps per activation to stop an unconditional self-loop from spinning forever" do
     flow = stub_const("SelfLoopFlow", Class.new(Omnibot::Workflow) do
       step(:a) { }
