@@ -1,0 +1,59 @@
+- label: greeting_fast_path
+  text: halo
+  expect: greeting_fast_path
+
+- label: greeting_fast_path
+  text: selamat pagi kak
+  expect: greeting_fast_path
+
+- label: kb_question
+  text: What do you offer?
+  expect: kb_answer
+
+- label: kb_question
+  text: How much does it cost?
+  expect: kb_answer
+
+- label: kb_question
+  text: How do I get started?
+  expect: kb_answer
+
+- label: kb_question
+  text: Do you have documentation about your features?
+  expect: kb_answer
+
+- label: handover_request
+  text: I want to talk to a human agent please
+  expect: handover
+
+- label: lead_capture
+  text: My name is Budi, email budi@example.com — please contact me
+  expect: lead_capture
+
+- label: anger
+  text: This tai, nothing works at all
+  expect: anger_handover
+
+- label: anger
+  text: This is fucking bullshit, I'm so frustrated
+  expect: anger_handover
+
+- label: chit_chat
+  text: What's the weather like?
+  expect: chit_chat
+
+- label: chit_chat
+  text: Tell me a joke
+  expect: chit_chat
+
+- label: followup
+  text: Can you explain that more simply?
+  expect: followup
+
+- label: followup
+  text: And what was the first thing you mentioned?
+  expect: followup
+
+- label: multi_tool
+  text: Search your knowledge base for pricing AND connect me to a human
+  expect: multi_tool
