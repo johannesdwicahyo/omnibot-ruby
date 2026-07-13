@@ -174,7 +174,13 @@ kb_detail = kb_rows.map do |r|
     "#{r[:text].inspect}: #{relation} (python=#{p_set.size} ruby=#{r_set.size})"
   end
 end.join("; ")
-add_check.call("kb_citations", kb_ok ? "PASS" : "FAIL", kb_detail)
+kb_status =
+  if kb_rows.any? && kb_rows.all? { |r| r.dig(:python, :error) || r.dig(:ruby, :error) }
+    "SKIPPED" # every kb entry errored — no citation pair was ever compared
+  else
+    kb_ok ? "PASS" : "FAIL"
+  end
+add_check.call("kb_citations", kb_status, kb_detail)
 
 # (c) handover
 handover_row = rows.find { |r| r[:expect] == "handover" }
@@ -196,11 +202,17 @@ else
   any_tripped = false
   all_agree = true
   detail = anger_rows.map do |r|
-    p_req = r.dig(:python, :handover, :requested) == true
-    r_req = r.dig(:ruby, :handover, :requested) == true
-    any_tripped ||= p_req || r_req
-    all_agree &&= (p_req == r_req)
-    "#{r[:text].inspect}: python=#{p_req} ruby=#{r_req}"
+    if r.dig(:python, :error) || r.dig(:ruby, :error)
+      # An errored anger entry means parity was NOT proven — never a vacuous PASS.
+      all_agree = false
+      "#{r[:text].inspect}: ERROR"
+    else
+      p_req = r.dig(:python, :handover, :requested) == true
+      r_req = r.dig(:ruby, :handover, :requested) == true
+      any_tripped ||= p_req || r_req
+      all_agree &&= (p_req == r_req)
+      "#{r[:text].inspect}: python=#{p_req} ruby=#{r_req}"
+    end
   end.join("; ")
   if all_agree && !any_tripped && threshold > 2
     detail += " (threshold #{threshold} > battery's 2 profane messages — neither engine expected to trip)"
