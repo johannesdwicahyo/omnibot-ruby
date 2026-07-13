@@ -3,7 +3,7 @@
   expect: greeting_fast_path
 
 - label: greeting_fast_path
-  text: selamat pagi kak
+  text: selamat pagi
   expect: greeting_fast_path
 
 - label: kb_question
@@ -22,6 +22,14 @@
   text: Do you have documentation about your features?
   expect: kb_answer
 
+- label: followup
+  text: Can you explain that more simply?
+  expect: followup
+
+- label: followup
+  text: And what was the first thing you mentioned?
+  expect: followup
+
 - label: handover_request
   text: I want to talk to a human agent please
   expect: handover
@@ -35,7 +43,7 @@
   expect: anger_handover
 
 - label: anger
-  text: This is fucking bullshit, I'm so frustrated
+  text: shit, this still does not work at all
   expect: anger_handover
 
 - label: chit_chat
@@ -45,14 +53,6 @@
 - label: chit_chat
   text: Tell me a joke
   expect: chit_chat
-
-- label: followup
-  text: Can you explain that more simply?
-  expect: followup
-
-- label: followup
-  text: And what was the first thing you mentioned?
-  expect: followup
 
 - label: multi_tool
   text: Search your knowledge base for pricing AND connect me to a human
