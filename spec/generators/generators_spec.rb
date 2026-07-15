@@ -47,11 +47,11 @@ RSpec.describe "generators" do
   end
 
   it "omnibot:workflow creates workflow + spec" do
-    quietly { Omnibot::Generators::WorkflowGenerator.start(["DepositCheck"], destination_root: tmp) }
-    wf = File.read(File.join(tmp, "app/workflows/deposit_check_workflow.rb"))
-    expect(wf).to include("class DepositCheckWorkflow < Omnibot::Workflow")
+    quietly { Omnibot::Generators::WorkflowGenerator.start(["OrderPayment"], destination_root: tmp) }
+    wf = File.read(File.join(tmp, "app/workflows/order_payment_workflow.rb"))
+    expect(wf).to include("class OrderPaymentWorkflow < Omnibot::Workflow")
     expect(wf).to include("wait_for_input")
-    spec = File.read(File.join(tmp, "spec/workflows/deposit_check_workflow_spec.rb"))
-    expect(spec).to include("DepositCheckWorkflow.start")
+    spec = File.read(File.join(tmp, "spec/workflows/order_payment_workflow_spec.rb"))
+    expect(spec).to include("OrderPaymentWorkflow.start")
   end
 end
