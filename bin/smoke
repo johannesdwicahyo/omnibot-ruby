@@ -93,7 +93,7 @@ end
 # --- 5. offline workflow check: Workflow never touches a provider, so this
 #        proves the durable engine (checkpoint -> resume -> done) works
 #        without spending a token, same schema-define pattern as
-#        examples/deposit_check.rb.
+#        examples/order_payment.rb.
 require "active_record"
 ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
 ActiveRecord::Base.logger = nil

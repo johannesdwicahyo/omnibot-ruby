@@ -122,14 +122,14 @@ end
 APPROVAL_THRESHOLD = 10_000_000
 ```
 
-**A deposit-check workflow that durably polls an external payment gateway** — [`examples/deposit_check.rb`](examples/deposit_check.rb):
+**An order-payment workflow that durably polls an external payment gateway** — [`examples/order_payment.rb`](examples/order_payment.rb):
 
 ```ruby
-  step :watch_gateway, poll: { every: 5, max_attempts: 5 } do
+  step :watch_payment, poll: { every: 5, max_attempts: 5 } do
     status = gateway_check
     puts "  ⏱  gateway says: #{status} (attempt #{attempts})"
     if status == :pending
-      reply "Still checking with the gateway… (attempt #{attempts})"
+      reply "Payment still processing… (attempt #{attempts})"
       poll_again
     end
     state.paid = (status == :paid)
@@ -287,7 +287,7 @@ run.current_step    # => "watch_gateway"
 run.state["amount"] # => 50_000
 ```
 
-This is the same flow as `examples/deposit_check.rb` (runnable: `bundle exec ruby examples/deposit_check.rb`) and `spec/omnibot/workflow_integration_spec.rb` — copy-paste it and swap in your own agent/gateway calls.
+This is the same flow as `spec/omnibot/workflow_integration_spec.rb`; `examples/order_payment.rb` is the runnable e-commerce-flavored equivalent (`bundle exec ruby examples/order_payment.rb`) — copy-paste it and swap in your own agent/gateway calls.
 
 A step body runs at most once per entry: `wait_for_input` throws out of the step immediately (statements after it never run), so bodies need no idempotence gymnastics. After a step returns normally, transitions are evaluated in declaration order — first matching `if:` wins (unconditional always matches) — and the run walks into the next step in the same activation, stopping only at `wait_for_input`, `handover!`, a poll schedule, a terminal step (`:done`, `:expired`, `:failed`, `:cancelled`, or any user step with no outgoing transitions), or an exception (→ `failed`, with `run.error` set).
 
