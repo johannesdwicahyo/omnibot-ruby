@@ -32,10 +32,12 @@ RSpec.describe "Agent.extract" do
   it "includes the JSON parse error message in the repair ask (T5)" do
     stub_agent(agent_class).then_reply("not json").then_reply('{"ok": true}')
 
-    original_factory = Omnibot.chat_factory
+    # fake! installs chat_factory_override, which outranks the plain global —
+    # wrap the override to capture the chat the agent actually uses.
+    original_override = Omnibot.chat_factory_override
     captured_chat = nil
-    Omnibot.chat_factory = lambda { |model:, **kw|
-      captured_chat = original_factory.call(model: model, **kw)
+    Omnibot.chat_factory_override = lambda { |model:, **kw|
+      captured_chat = original_override.call(model: model, **kw)
     }
 
     agent_class.extract("x", schema: schema)
@@ -44,6 +46,6 @@ RSpec.describe "Agent.extract" do
     expect(repair_message).not_to be_nil
     expect(repair_message[:content]).to include("unexpected token")
   ensure
-    Omnibot.chat_factory = original_factory
+    Omnibot.chat_factory_override = original_override
   end
 end

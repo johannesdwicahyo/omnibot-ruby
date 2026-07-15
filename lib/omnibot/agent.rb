@@ -28,6 +28,18 @@ module Omnibot
       def fast_paths = @fast_paths ||= []
       def fast_path(&block) = fast_paths << block
 
+      # Per-agent chat factory (e.g. to set temperature/params for THIS agent
+      # only). Precedence: Omnibot::Testing.fake! override > class factory >
+      # Omnibot.chat_factory. Accepts a callable or a block.
+      def chat_factory(callable = nil, &block)
+        factory = callable || block
+        factory ? @chat_factory = factory : @chat_factory
+      end
+
+      def resolved_chat_factory
+        Omnibot.chat_factory_override || chat_factory || Omnibot.chat_factory
+      end
+
       def inherited(subclass)
         super
         subclass.instance_variable_set(:@model, @model)
@@ -35,6 +47,7 @@ module Omnibot
         subclass.instance_variable_set(:@max_turns, @max_turns)
         subclass.instance_variable_set(:@tools, tools.dup)
         subclass.instance_variable_set(:@fast_paths, fast_paths.dup)
+        subclass.instance_variable_set(:@chat_factory, @chat_factory)
       end
 
       def run(message, history: [], context: {}, stream: nil)
@@ -69,7 +82,7 @@ module Omnibot
     def reply(text) = throw(FAST_REPLY, text)
 
     def extract(input, schema:)
-      chat = Omnibot.chat_factory.call(model: self.class.model, agent_class: self.class)
+      chat = self.class.resolved_chat_factory.call(model: self.class.model, agent_class: self.class)
       chat.with_instructions(interpolated_instructions) if self.class.instructions
       chat.with_schema(schema)
 
@@ -137,7 +150,7 @@ module Omnibot
     end
 
     def build_chat
-      chat = Omnibot.chat_factory.call(model: self.class.model, agent_class: self.class)
+      chat = self.class.resolved_chat_factory.call(model: self.class.model, agent_class: self.class)
       chat.with_instructions(interpolated_instructions) if self.class.instructions
       attach_history(chat)
       tools = tools_for(context).map { |t| t.is_a?(Class) ? t.new(context) : t }

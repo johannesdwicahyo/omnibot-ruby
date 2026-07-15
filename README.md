@@ -58,6 +58,7 @@ Semantics worth knowing:
 - `instructions` support `{{var}}` interpolation from `context`; a missing variable raises `KeyError`.
 - `history` is a plain array of `{ role:, content: }` hashes (or anything that responds to `#role`/`#content`) — the gem never persists conversations itself.
 - A custom `Omnibot.chat_factory` lambda must accept extra kwargs (e.g. `->(model:, **) { ... }`) — Agent always calls it with `agent_class:` in addition to `model:`.
+- Per-agent factories (v0.2.1): declare `chat_factory ->(model:, **) { RubyLLM.chat(model: model).with_temperature(0.9) }` inside an agent class to customize chat construction for that agent only (inherited by subclasses; overridable). Precedence: `Omnibot::Testing.fake!` > class-level `chat_factory` > global `Omnibot.chat_factory` — so specs stay offline even for agents with custom factories.
 - Block-tool params are always JSON type `"string"` — models send `"123"`, not `123`. Declare param types via class-form tools (`param :n, type: "integer"`) when types matter.
 - Class-form tools must declare `param` explicitly — the wrapper that adds error capture shadows `#execute`'s signature, so ruby_llm's automatic param inference doesn't see your keyword args:
 

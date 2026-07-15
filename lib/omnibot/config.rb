@@ -17,5 +17,9 @@ module Omnibot
       @chat_factory ||= ->(model:, **) { RubyLLM.chat(model: model) }
     end
     attr_writer :chat_factory
+
+    # Set by Omnibot::Testing.fake! — beats per-agent factories so specs
+    # stay offline even for agents that declare their own chat_factory.
+    attr_accessor :chat_factory_override
   end
 end

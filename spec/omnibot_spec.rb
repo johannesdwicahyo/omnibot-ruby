@@ -1,6 +1,6 @@
 RSpec.describe Omnibot do
   it "has a version" do
-    expect(Omnibot::VERSION).to eq("0.2.0")
+    expect(Omnibot::VERSION).to eq("0.2.1")
   end
 
   it "configures default_model" do

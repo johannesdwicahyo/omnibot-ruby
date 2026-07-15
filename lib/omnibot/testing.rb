@@ -7,14 +7,19 @@ module Omnibot
     class << self
       def fake!
         @original_factory ||= Omnibot.chat_factory
-        Omnibot.chat_factory = ->(model:, agent_class: nil, **) {
+        fake = ->(model:, agent_class: nil, **) {
           FakeChat.new(agent_class: agent_class)
         }
+        Omnibot.chat_factory = fake
+        # Override beats per-agent chat_factory declarations, so specs stay
+        # offline even for agents that configure their own factory.
+        Omnibot.chat_factory_override = fake
       end
 
       def reset!
         Omnibot.chat_factory = @original_factory if @original_factory
         @original_factory = nil
+        Omnibot.chat_factory_override = nil
         scripts.clear
       end
 
