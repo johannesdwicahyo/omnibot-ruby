@@ -173,17 +173,17 @@ result.usage.input_tokens # => 0
 `Agent.extract(input, schema:)` runs a single-shot structured extraction. Pass a [`RubyLLM::Schema`](https://github.com/crmne/ruby_llm) subclass describing the shape you want; on invalid JSON, omnibot automatically retries once with a repair prompt before raising `Omnibot::ExtractionError`.
 
 ```ruby
-class DepositProof < RubyLLM::Schema
-  string :bank
+class PaymentReceipt < RubyLLM::Schema
+  string :method
   integer :amount
 end
 
-class ProofAgent < Omnibot::Agent
-  instructions "Extract the bank name and amount from the customer's message."
+class ReceiptAgent < Omnibot::Agent
+  instructions "Extract the payment method and amount from the customer's message."
 end
 
-result = ProofAgent.extract("transfer 50rb via BCA", schema: DepositProof)
-result # => { amount: 50_000, bank: "BCA" }
+result = ReceiptAgent.extract("paid Rp250.000 by bank transfer", schema: PaymentReceipt)
+result # => { amount: 250_000, method: "bank transfer" }
 ```
 
 Note for testing: `Omnibot::Testing`'s fake chat ignores whatever you pass as `schema:` — it just parses the scripted reply as JSON (or passes a scripted Hash straight through via `then_extract`). Schema-driven provider-side structured output only kicks in against a real LLM.
@@ -243,51 +243,51 @@ The fake replays your script in order: `to_call_tool` asserts a tool is called a
 
 ```bash
 rails g omnibot:install       # also creates the omnibot_workflow_runs migration (skipped if it exists)
-rails g omnibot:workflow DepositCheck
+rails g omnibot:workflow OrderPayment
 ```
 
 ```ruby
-class DepositCheckWorkflow < Omnibot::Workflow
-  state :amount, :bank, :paid
+class OrderPaymentWorkflow < Omnibot::Workflow
+  state :amount, :method, :paid
 
-  step :ask_for_proof do
-    reply "Please upload your transfer receipt 🙏"
+  step :ask_for_receipt do
+    reply "Thanks for your order! Please upload your payment receipt 🙏"
     wait_for_input                              # checkpoint: pause and persist; resumes on the next message
   end
 
-  step :extract_proof do
-    proof = ProofAgent.extract(input, schema: Class.new)   # input = what resume() received
-    state.amount = proof[:amount]
-    state.bank = proof[:bank]
-    reply "Got it — Rp#{state.amount} via #{state.bank}. Checking with the gateway…"
+  step :verify_receipt do
+    receipt = ReceiptAgent.extract(input, schema: Class.new)   # input = what resume() received
+    state.amount = receipt[:amount]
+    state.method = receipt[:method]
+    reply "Got it — Rp#{state.amount} via #{state.method}. Confirming payment…"
   end
 
-  step :watch_gateway, poll: { every: 5, max_attempts: 5 } do
+  step :watch_payment, poll: { every: 5, max_attempts: 5 } do
     status = gateway_check
     if status == :pending
-      reply "Still checking with the gateway… (attempt #{attempts})"
+      reply "Payment still processing… (attempt #{attempts})"
       poll_again                                # schedule the next tick, stop this one
     end
     state.paid = (status == :paid)
   end
 
-  transition from: :ask_for_proof, to: :extract_proof
-  transition from: :extract_proof, to: :watch_gateway
-  transition from: :watch_gateway, to: :done, if: -> { state.paid }
-  transition from: :watch_gateway, to: :failed
+  transition from: :ask_for_receipt, to: :verify_receipt
+  transition from: :verify_receipt, to: :watch_payment
+  transition from: :watch_payment, to: :done, if: -> { state.paid }
+  transition from: :watch_payment, to: :failed
 end
 
-run = DepositCheckWorkflow.start
+run = OrderPaymentWorkflow.start
 run.status          # => "waiting_for_input"
-run.replies         # => ["Please upload your transfer receipt 🙏"]
+run.replies         # => ["Thanks for your order! Please upload your payment receipt 🙏"]
 
-run = DepositCheckWorkflow.resume(run, input: "transfer 50rb via BCA, receipt attached")
+run = OrderPaymentWorkflow.resume(run, input: "paid Rp250.000 by bank transfer, receipt attached")
 run.status          # => "running" — now polling the gateway on an ActiveJob timer
-run.current_step    # => "watch_gateway"
-run.state["amount"] # => 50_000
+run.current_step    # => "watch_payment"
+run.state["amount"] # => 250_000
 ```
 
-This is the same flow as `spec/omnibot/workflow_integration_spec.rb`; `examples/order_payment.rb` is the runnable e-commerce-flavored equivalent (`bundle exec ruby examples/order_payment.rb`) — copy-paste it and swap in your own agent/gateway calls.
+This is `examples/order_payment.rb` (runnable: `bundle exec ruby examples/order_payment.rb`), covered end-to-end by `spec/omnibot/workflow_integration_spec.rb` — copy-paste it and swap in your own agent/gateway calls.
 
 A step body runs at most once per entry: `wait_for_input` throws out of the step immediately (statements after it never run), so bodies need no idempotence gymnastics. After a step returns normally, transitions are evaluated in declaration order — first matching `if:` wins (unconditional always matches) — and the run walks into the next step in the same activation, stopping only at `wait_for_input`, `handover!`, a poll schedule, a terminal step (`:done`, `:expired`, `:failed`, `:cancelled`, or any user step with no outgoing transitions), or an exception (→ `failed`, with `run.error` set).
 
