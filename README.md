@@ -76,6 +76,68 @@ Semantics worth knowing:
   end
   ```
 
+## What can you build
+
+**A support chatbot with fast paths, a docs tool, and escalation** — [`examples/support_bot.rb`](examples/support_bot.rb):
+
+```ruby
+  fast_path do |message, _context|
+    reply "Halo! 👋 Menu: 1) Reset password 2) Billing 3) Talk to human" if message.match?(/\A(hi|halo|hai|hello)\b/i)
+  end
+
+  tool :search_docs, "Search the product documentation" do |query:|
+    Demo.searched = query
+    DOCS.select { |title, _| query.downcase.split.any? { |w| title.include?(w) } }
+        .map { |title, body| "[#{title}] #{body}" }
+        .join("\n").then { |r| r.empty? ? "No docs found." : r }
+  end
+```
+
+**A sales assistant that qualifies leads, captures contacts, and turns the conversation into a durable booking** — [`examples/sales_bot.rb`](examples/sales_bot.rb):
+
+```ruby
+  step :offer_slots do
+    reply "We have demo slots: Tue 10:00 or Wed 14:00 — which works?"
+    wait_for_input
+  end
+
+  step :confirm do
+    state.slot = input
+    reply "Booked! See you #{state.slot} 🎉"
+  end
+```
+
+**An invoice approval pipeline with zero chat — extract, validate, and route on a threshold** — [`examples/invoice_pipeline.rb`](examples/invoice_pipeline.rb):
+
+```ruby
+  .then_extract({ "vendor" => "PT Maju Jaya", "amount" => 1_500_000, "invoice_no" => "INV-001", "date" => "2026-07-01" })
+  .then_extract({ "vendor" => "CV Mega Proyek", "amount" => 75_000_000, "invoice_no" => "INV-002", "date" => "2026-07-03" })
+
+def validate!(fields)
+  %i[vendor amount invoice_no date].each { |k| raise "missing #{k}" if fields[k].to_s.empty? && fields[k].to_i.zero? }
+  raise "non-positive amount" unless fields[:amount].to_i.positive?
+  fields
+end
+
+APPROVAL_THRESHOLD = 10_000_000
+```
+
+**A deposit-check workflow that durably polls an external payment gateway** — [`examples/deposit_check.rb`](examples/deposit_check.rb):
+
+```ruby
+  step :watch_gateway, poll: { every: 5, max_attempts: 5 } do
+    status = gateway_check
+    puts "  ⏱  gateway says: #{status} (attempt #{attempts})"
+    if status == :pending
+      reply "Still checking with the gateway… (attempt #{attempts})"
+      poll_again
+    end
+    state.paid = (status == :paid)
+  end
+```
+
+All examples run offline in seconds: `bundle exec ruby examples/support_bot.rb` — no API key needed.
+
 ## Fast paths
 
 Fast paths run in declaration order *before* any LLM call. Call `reply(text)` to short-circuit with zero token usage; return `nil` (or don't call `reply`) to fall through to the next fast path, and eventually to the LLM. Override `tools_for(context)` to gate which tools are attached per run.
