@@ -2,3 +2,6 @@
 /pkg/
 /tmp/
 *.gem
+
+# internal planning docs stay local
+/docs/
